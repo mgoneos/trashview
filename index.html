@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="https://pro.fontawesome.com/releases/v5.10.0/css/all.css" integrity="sha384-AYmEC3Yw5cVb3ZcuHtOA93w35dYTsvhLPVnYs9eStHfGJvOvKxVfELGroGkvsg+p" crossorigin="anonymous"/>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <style>
+        /* Previous styles remain the same */
         body {
             font-family: 'Inter', sans-serif;
             color: #666666;
@@ -126,15 +127,6 @@
             display: none;
         }
 
-        #overlayCanvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-        }
-
         .prediction-overlay {
             position: absolute;
             top: 10px;
@@ -148,14 +140,28 @@
             display: none;
         }
 
-        .codeblock {
-            border-width: 1px;
-            border-color: #cbd5e0;
-            border-radius: 0.25rem;
-            display: block;
-            padding: 0.75rem;
+        .camera-select {
+            width: 100%;
+            max-width: 300px;
+            margin: 10px 0;
+            padding: 8px;
+            border: 1px solid #cbd5e0;
+            border-radius: 4px;
             background-color: white;
-            overflow-x: auto;
+            color: #666666;
+            font-size: 14px;
+        }
+
+        .camera-select:disabled {
+            background-color: #f7fafc;
+            cursor: not-allowed;
+        }
+
+        .controls-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
         }
 
         @media (min-width: 768px) {
@@ -196,8 +202,13 @@
             </div>
             <div class="content__grid">
                 <div class="col-12">
-                    <button type="button" id="startWebcam" class="bttn__primary">Start Webcam</button>
-                    <button type="button" id="captureFrame" class="bttn__primary" style="margin-left: 10px;" disabled>Capture and Analyze</button>
+                    <select id="cameraSelect" class="camera-select" disabled>
+                        <option value="">Loading cameras...</option>
+                    </select>
+                    <div class="controls-container">
+                        <button type="button" id="startWebcam" class="bttn__primary">Start Webcam</button>
+                        <button type="button" id="captureFrame" class="bttn__primary" disabled>Capture and Analyze</button>
+                    </div>
                 </div>
             </div>
             <div class="result" id="resultContainer">
@@ -221,9 +232,43 @@
             let captureButton = document.getElementById('captureFrame');
             let startWebcamButton = document.getElementById('startWebcam');
             let predictionOverlay = document.getElementById('predictionOverlay');
+            let cameraSelect = document.getElementById('cameraSelect');
+            
+            let currentStream = null;
+
+            // Get available cameras
+            async function getCameras() {
+                try {
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                    cameraSelect.innerHTML = videoDevices.map(device =>
+                        `<option value="${device.deviceId}">${device.label || `Camera ${videoDevices.indexOf(device) + 1}`}</option>`
+                    ).join('');
+                    cameraSelect.disabled = false;
+                } catch (error) {
+                    console.error("Error getting cameras:", error);
+                    cameraSelect.innerHTML = '<option value="">No cameras found</option>';
+                }
+            }
+
+            // Request camera permissions and get list of cameras
+            async function initializeCameras() {
+                try {
+                    // First get basic camera access to trigger permissions
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    stream.getTracks().forEach(track => track.stop()); // Stop this initial stream
+                    await getCameras(); // Now we can get the camera list with labels
+                } catch (error) {
+                    console.error("Error initializing cameras:", error);
+                    alert("Error accessing camera. Please make sure you have granted camera permissions.");
+                }
+            }
+
+            // Initialize camera list
+            initializeCameras();
 
             startWebcamButton.addEventListener('click', function() {
-                if (videoElement.srcObject) {
+                if (currentStream) {
                     stopWebcam();
                 } else {
                     startWebcam();
@@ -234,24 +279,41 @@
                 captureAndAnalyze();
             });
 
-            function startWebcam() {
-                navigator.mediaDevices.getUserMedia({ video: true })
-                    .then(function(stream) {
-                        videoElement.srcObject = stream;
-                        startWebcamButton.textContent = 'Stop Webcam';
-                        captureButton.disabled = false;
-                        predictionOverlay.style.display = 'none';
-                    })
-                    .catch(function(error) {
-                        console.error("Error accessing webcam:", error);
-                        alert("Error accessing webcam. Please make sure you have granted camera permissions.");
-                    });
+            cameraSelect.addEventListener('change', function() {
+                if (currentStream) {
+                    startWebcam(); // Restart stream with new camera
+                }
+            });
+
+            async function startWebcam() {
+                if (currentStream) {
+                    stopWebcam();
+                }
+
+                const constraints = {
+                    video: {
+                        deviceId: cameraSelect.value ? { exact: cameraSelect.value } : undefined
+                    }
+                };
+
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                    currentStream = stream;
+                    videoElement.srcObject = stream;
+                    startWebcamButton.textContent = 'Stop Webcam';
+                    captureButton.disabled = false;
+                    predictionOverlay.style.display = 'none';
+                } catch (error) {
+                    console.error("Error accessing webcam:", error);
+                    alert("Error accessing webcam. Please make sure you have granted camera permissions.");
+                }
             }
 
             function stopWebcam() {
-                let stream = videoElement.srcObject;
-                let tracks = stream.getTracks();
-                tracks.forEach(track => track.stop());
+                if (currentStream) {
+                    currentStream.getTracks().forEach(track => track.stop());
+                    currentStream = null;
+                }
                 videoElement.srcObject = null;
                 startWebcamButton.textContent = 'Start Webcam';
                 captureButton.disabled = true;
@@ -303,6 +365,6 @@
             navigator.serviceWorker.register('/sw.js');
           });
         }
-</script>
+    </script>
 </body>
 </html>
