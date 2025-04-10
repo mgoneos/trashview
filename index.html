@@ -2,10 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Object Sorting with ResNet50 Material Analysis</title>
-  <!-- Load TensorFlow.js and COCO-SSD -->
+  <title>Hand Detection and Material Classification</title>
+  <!-- Load TensorFlow.js and the Handpose model -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/handpose"></script>
   <style>
     body {
       margin: 0;
@@ -26,28 +26,34 @@
   </style>
 </head>
 <body>
-  <!-- Video element for camera stream -->
+  <!-- Video stream element -->
   <video id="video" width="640" height="480" autoplay playsinline muted></video>
-  <!-- Canvas for overlays (for the bins and the red line) -->
+  <!-- Canvas for drawing overlays, bounding boxes, and the red line -->
   <canvas id="canvas" width="640" height="480"></canvas>
-
+  
   <script>
     const video = document.getElementById("video");
     const canvas = document.getElementById("canvas");
     const context = canvas.getContext("2d");
 
-    // Fixed positions for bins.
+    // Fixed positions for bins on the canvas.
     const trashBinPos = { x: 50, y: canvas.height - 50 };
     const recycleBinPos = { x: canvas.width - 50, y: canvas.height - 50 };
 
-    // Define recyclable materials.
+    // List of materials considered recyclable.
     const recyclableMaterials = ["plastic", "metal", "glass", "paper"];
 
-    // Global model variables.
-    let cocoModel;           // For object detection.
+    // Global variables for our models.
+    let handposeModel;       // For hand detection.
     let materialClassifier;  // Your ResNet50-based material classification model.
 
-    // Load your ResNet50 model (make sure it is converted to TFJS format and placed in the model folder).
+    // Load the Handpose model.
+    handpose.load().then(model => {
+      handposeModel = model;
+      console.log("Handpose model loaded.");
+    }).catch(err => console.error("Error loading handpose model:", err));
+
+    // Load your material classifier model (converted from your .keras ResNet50).
     tf.loadLayersModel("model/model.json")
       .then(model => {
         materialClassifier = model;
@@ -57,7 +63,7 @@
 
     // Start the webcam stream.
     function startVideoStream() {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      if (navigator.mediaDevices.getUserMedia) {
         navigator.mediaDevices.getUserMedia({ video: true })
           .then(stream => {
             video.srcObject = stream;
@@ -68,9 +74,9 @@
       }
     }
 
-    // Draw the fixed bins.
+    // Draw the fixed bin areas.
     function drawBins() {
-      // Draw Trash bin.
+      // Draw Trash bin (left).
       context.fillStyle = "gray";
       context.beginPath();
       context.arc(trashBinPos.x, trashBinPos.y, 30, 0, 2 * Math.PI);
@@ -78,8 +84,8 @@
       context.font = "16px Arial";
       context.fillStyle = "white";
       context.fillText("Trash", trashBinPos.x - 20, trashBinPos.y + 5);
-
-      // Draw Recycling bin.
+  
+      // Draw Recycling bin (right).
       context.fillStyle = "blue";
       context.beginPath();
       context.arc(recycleBinPos.x, recycleBinPos.y, 30, 0, 2 * Math.PI);
@@ -88,97 +94,112 @@
       context.fillText("Recycle", recycleBinPos.x - 30, recycleBinPos.y + 5);
     }
 
-    // Asynchronously classify material using your ResNet50 model.
+    // Asynchronously classify the material using your ResNet50 model.
     async function classifyMaterial(imageData) {
-      // Convert the region (ImageData) to a tensor.
+      // Convert ImageData to a tensor.
       let tensor = tf.browser.fromPixels(imageData);
-      // Resize to match your model's expected input (update to 384x384 here if your model expects that).
+      // Resize tensor to match the model's expected input size (384x384 in this example).
       tensor = tf.image.resizeBilinear(tensor, [384, 384]);
-      // Create a batch dimension.
+      // Expand dimensions to create a batch (resulting shape: [1, 384, 384, 3]).
       tensor = tensor.expandDims(0);
       // Normalize pixel values to [0, 1].
       tensor = tensor.toFloat().div(tf.scalar(255));
-
+  
       if (materialClassifier) {
         const prediction = materialClassifier.predict(tensor);
-        // Retrieve the predicted class index.
+        // Use argMax to retrieve the index of the highest score.
         const predictedIndex = prediction.argMax(-1).dataSync()[0];
-        // Map the index to material labels. Adjust this list to match your training.
+        // Map the index to material labels (adjust as per your training).
         const labels = ["plastic", "metal", "glass", "paper", "organic", "other"];
         return labels[predictedIndex];
       } else {
         return "unknown";
       }
     }
-
-    // Main loop: detect objects, classify material, and draw overlays.
+  
+    // Main loop: detect hand, compute bounding box, classify the region, and draw overlays.
     async function predictWebcam() {
-      // Draw current video frame on canvas.
+      // Draw the current video frame on the canvas.
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      // Draw the bin areas.
       drawBins();
-
-      // Run COCO-SSD object detection.
-      const predictions = await cocoModel.detect(video);
-      // Filter out 'person' detections.
-      const nonPersonPredictions = predictions.filter(pred => pred.class !== "person");
-
-      // If there is at least one non-person object, run material analysis.
-      if (nonPersonPredictions.length > 0) {
-        const obj = nonPersonPredictions[0];
-        // Extract the bounding box (with valid coordinates).
-        const x = Math.max(0, Math.floor(obj.bbox[0]));
-        const y = Math.max(0, Math.floor(obj.bbox[1]));
-        const width = Math.floor(obj.bbox[2]);
-        const height = Math.floor(obj.bbox[3]);
-
-        let objImageData;
-        try {
-          objImageData = context.getImageData(x, y, width, height);
-        } catch (e) {
-          console.error("Error extracting image data:", e);
-        }
-
-        if (objImageData) {
-          // Run the material classifier.
-          const material = await classifyMaterial(objImageData);
-          console.log("Predicted material:", material);
-
-          // Determine the target bin.
-          const target = recyclableMaterials.includes(material)
+  
+      if (handposeModel) {
+        // Run hand detection.
+        const hands = await handposeModel.estimateHands(video);
+  
+        if (hands.length > 0) {
+          // Use the first detected hand.
+          const hand = hands[0];
+          const landmarks = hand.landmarks; // Array of 21 [x, y, z] coordinates.
+  
+          // Compute the bounding box from hand landmarks.
+          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+          landmarks.forEach(point => {
+            const [x, y] = point;
+            if (x < minX) minX = x;
+            if (y < minY) minY = y;
+            if (x > maxX) maxX = x;
+            if (y > maxY) maxY = y;
+          });
+  
+          // Add padding to the bounding box.
+          const pad = 20;
+          minX = Math.max(0, minX - pad);
+          minY = Math.max(0, minY - pad);
+          maxX = Math.min(canvas.width, maxX + pad);
+          maxY = Math.min(canvas.height, maxY + pad);
+          const boxWidth = maxX - minX;
+          const boxHeight = maxY - minY;
+  
+          // Draw the bounding box around the hand.
+          context.strokeStyle = "#00FFFF";
+          context.lineWidth = 2;
+          context.strokeRect(minX, minY, boxWidth, boxHeight);
+  
+          // Extract the region of interest (ROI) for material classification.
+          let roiImageData;
+          try {
+            roiImageData = context.getImageData(minX, minY, boxWidth, boxHeight);
+          } catch (e) {
+            console.error("Error extracting image data:", e);
+          }
+  
+          if (roiImageData) {
+            // Run material classification on the extracted region.
+            const material = await classifyMaterial(roiImageData);
+            console.log("Predicted material:", material);
+  
+            // Determine target bin based on the predicted material.
+            const target = recyclableMaterials.includes(material)
                             ? recycleBinPos
                             : trashBinPos;
-
-          // Calculate the center of the detected object's bounding box.
-          const centerX = x + width / 2;
-          const centerY = y + height / 2;
-
-          // Draw a red line from the object's center to the target bin.
-          context.strokeStyle = "red";
-          context.lineWidth = 3;
-          context.beginPath();
-          context.moveTo(centerX, centerY);
-          context.lineTo(target.x, target.y);
-          context.stroke();
-
-          // Optionally display the predicted material above the bounding box.
-          context.font = "18px Arial";
-          context.fillStyle = "red";
-          context.fillText(material, x, (y > 20 ? y - 5 : 20));
+  
+            // Determine the center of the hand bounding box.
+            const centerX = minX + boxWidth / 2;
+            const centerY = minY + boxHeight / 2;
+  
+            // Draw a red line from the hand's center to the target bin.
+            context.strokeStyle = "red";
+            context.lineWidth = 3;
+            context.beginPath();
+            context.moveTo(centerX, centerY);
+            context.lineTo(target.x, target.y);
+            context.stroke();
+  
+            // Optionally display the predicted material above the bounding box.
+            context.font = "18px Arial";
+            context.fillStyle = "red";
+            context.fillText(material, minX, (minY > 20 ? minY - 5 : 20));
+          }
         }
       }
       requestAnimationFrame(predictWebcam);
     }
-
-    // Load the COCO-SSD model.
-    cocoSsd.load().then(model => {
-      cocoModel = model;
-      console.log("COCO-SSD model loaded.");
-      video.addEventListener("loadeddata", predictWebcam);
-    });
-
-    // Start the video stream.
+  
+    // Start the video stream on page load.
     startVideoStream();
+    // Start the prediction loop once the video is ready.
+    video.addEventListener("loadeddata", predictWebcam);
   </script>
 </body>
 </html>
