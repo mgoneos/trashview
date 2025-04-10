@@ -1,370 +1,196 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <link rel="manifest" href="/manifest.json">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black">
-    <meta name="apple-mobile-web-app-title" content="Webcam Classifier">
-    <link rel="apple-touch-icon" href="icon-192.png">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://pro.fontawesome.com/releases/v5.10.0/css/all.css" integrity="sha384-AYmEC3Yw5cVb3ZcuHtOA93w35dYTsvhLPVnYs9eStHfGJvOvKxVfELGroGkvsg+p" crossorigin="anonymous"/>
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <style>
-        /* Previous styles remain the same */
-        body {
-            font-family: 'Inter', sans-serif;
-            color: #666666;
-            background-color: #f7fafc;
-            font-size: 16px;
-            padding-bottom: 5rem;
-        }
-
-        .headline {
-            font-size: 1.25rem;
-            font-weight: 600;
-        }
-
-        .header {
-            background-color: white;
-            padding: 1rem;
-            padding-bottom: 2.5rem;
-        }
-
-        .header__grid {
-            display: grid;
-            grid-template-columns: repeat(1, minmax(0, 1fr));
-            grid-template-rows: repeat(4, minmax(0, 1fr));
-            gap: 1.5rem;
-            max-width: 56rem;
-        }
-
-        .header__logo {
-            height: 4rem;
-        }
-
-        .header__label {
-            text-transform: uppercase;
-            display: block;
-            margin-bottom: 0.5rem;
-            font-size: 0.875rem;
-            font-weight: 600;
-            color: #718096;
-        }
-
-        .content {
-            padding: 1rem;
-            width: 100%;
-        }
-
-        .content__grid {
-            display: grid;
-            grid-template-columns: repeat(12, minmax(0, 1fr));
-            grid-template-rows: repeat(3, minmax(0, 1fr));
-            max-width: 56rem;
-            column-gap: 1rem;
-            row-gap: 2.5rem;
-            padding-top: 1rem;
-            padding-bottom: 1rem;
-        }
-
-        .input {
-            border-width: 1px;
-            border-color: #cbd5e0;
-            border-radius: 0.25rem;
-            height: 2.5rem;
-            width: 100%;
-            padding-left: 0.5rem;
-            padding-right: 0.5rem;
-        }
-
-        .bttn__primary {
-            background-color: #606FC7;
-            color: white;
-            border-width: 1px;
-            border-color: #606FC7;
-            border-radius: 0.25rem;
-            font-size: 1.125rem;
-            padding-left: 1.25rem;
-            padding-right: 1.25rem;
-            padding-top: 0.75rem;
-            padding-bottom: 0.75rem;
-        }
-
-        .bttn__primary:hover {
-            background-color: #4c51bf;
-        }
-
-        .result {
-            max-width: 56rem;
-        }
-
-        .divider {
-            border-width: 1px;
-            border-color: #cbd5e0;
-            margin-top: 2.5rem;
-            margin-bottom: 2.5rem;
-            height: 0;
-        }
-
-        .col-12 {
-            grid-column: span 12 / span 12;
-        }
-
-        .video-container {
-            width: 100%;
-            max-width: 640px;
-            margin: 20px auto;
-            position: relative;
-        }
-
-        #videoElement {
-            width: 100%;
-            border-radius: 8px;
-            border: 2px solid #cbd5e0;
-        }
-
-        #canvas {
-            display: none;
-        }
-
-        .prediction-overlay {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            background-color: rgba(0, 0, 0, 0.7);
-            color: white;
-            padding: 8px 12px;
-            border-radius: 4px;
-            font-size: 14px;
-            font-weight: 600;
-            display: none;
-        }
-
-        .camera-select {
-            width: 100%;
-            max-width: 300px;
-            margin: 10px 0;
-            padding: 8px;
-            border: 1px solid #cbd5e0;
-            border-radius: 4px;
-            background-color: white;
-            color: #666666;
-            font-size: 14px;
-        }
-
-        .camera-select:disabled {
-            background-color: #f7fafc;
-            cursor: not-allowed;
-        }
-
-        .controls-container {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            flex-wrap: wrap;
-        }
-
-        @media (min-width: 768px) {
-            .header__grid {
-                grid-template-columns: repeat(4, minmax(0, 1fr));
-                grid-template-rows: repeat(1, minmax(0, 1fr));
-            }
-            .header__logo {
-                grid-column: span 1 / span 1;
-            }
-        }
-    </style>
+  <meta charset="UTF-8">
+  <title>Object Sorting with ResNet50 Material Analysis</title>
+  <!-- Load TensorFlow.js and COCO-SSD -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #222;
+      color: #eee;
+      text-align: center;
+    }
+    #video, #canvas {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+    }
+    #canvas {
+      z-index: 10;
+    }
+  </style>
 </head>
 <body>
-    <form id="inputForm">
-        <div class="header">
-            <div class="header__grid">
-                <img class="header__logo" src="https://uploads-ssl.webflow.com/5f6bc60e665f54545a1e52a5/6143750f1177056d60fc52d9_roboflow_logomark_inference.png" alt="Roboflow Inference">
-                <div>
-                    <label class="header__label" for="model">Model</label>
-                    <input class="input" type="text" id="model" />
-                </div>
-                <div>
-                    <label class="header__label" for="version">Version</label>
-                    <input class="input" type="number" id="version" />
-                </div>
-                <div>
-                    <label class="header__label" for="api_key">API Key</label>
-                    <input class="input" type="text" id="api_key" />
-                </div>
-            </div>
-        </div>
-        <div class="content">
-            <div class="video-container">
-                <video id="videoElement" autoplay playsinline></video>
-                <canvas id="canvas"></canvas>
-                <div id="predictionOverlay" class="prediction-overlay"></div>
-            </div>
-            <div class="content__grid">
-                <div class="col-12">
-                    <select id="cameraSelect" class="camera-select" disabled>
-                        <option value="">Loading cameras...</option>
-                    </select>
-                    <div class="controls-container">
-                        <button type="button" id="startWebcam" class="bttn__primary">Start Webcam</button>
-                        <button type="button" id="captureFrame" class="bttn__primary" disabled>Capture and Analyze</button>
-                    </div>
-                </div>
-            </div>
-            <div class="result" id="resultContainer">
-                <div class="divider"></div>
-                <div class="result__header">
-                    <h3 class="headline">Result</h3>
-                </div>
-                <pre id="output" class="codeblock">Inference results will appear here</pre>
-            </div>
-        </div>
-    </form>
+  <!-- Video element for camera stream -->
+  <video id="video" width="640" height="480" autoplay playsinline muted></video>
+  <!-- Canvas for overlays (bounding boxes, lines, etc.) -->
+  <canvas id="canvas" width="640" height="480"></canvas>
 
-    <script>
-        $(function() {
-            $('#model').val("trashclassification-kdsop");
-            $('#version').val("3");
-            $('#api_key').val("bRmnAKSZ2431YDeNvfe8");
+  <script>
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
+    const context = canvas.getContext("2d");
 
-            let videoElement = document.getElementById('videoElement');
-            let canvas = document.getElementById('canvas');
-            let captureButton = document.getElementById('captureFrame');
-            let startWebcamButton = document.getElementById('startWebcam');
-            let predictionOverlay = document.getElementById('predictionOverlay');
-            let cameraSelect = document.getElementById('cameraSelect');
-            
-            let currentStream = null;
+    // Fixed positions for the bins.
+    const trashBinPos = { x: 50, y: canvas.height - 50 };
+    const recycleBinPos = { x: canvas.width - 50, y: canvas.height - 50 };
 
-            // Get available cameras
-            async function getCameras() {
-                try {
-                    const devices = await navigator.mediaDevices.enumerateDevices();
-                    const videoDevices = devices.filter(device => device.kind === 'videoinput');
-                    cameraSelect.innerHTML = videoDevices.map(device =>
-                        `<option value="${device.deviceId}">${device.label || `Camera ${videoDevices.indexOf(device) + 1}`}</option>`
-                    ).join('');
-                    cameraSelect.disabled = false;
-                } catch (error) {
-                    console.error("Error getting cameras:", error);
-                    cameraSelect.innerHTML = '<option value="">No cameras found</option>';
-                }
-            }
+    // Define which materials are considered recyclable.
+    const recyclableMaterials = ["plastic", "metal", "glass", "paper"];
 
-            // Request camera permissions and get list of cameras
-            async function initializeCameras() {
-                try {
-                    // First get basic camera access to trigger permissions
-                    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                    stream.getTracks().forEach(track => track.stop()); // Stop this initial stream
-                    await getCameras(); // Now we can get the camera list with labels
-                } catch (error) {
-                    console.error("Error initializing cameras:", error);
-                    alert("Error accessing camera. Please make sure you have granted camera permissions.");
-                }
-            }
+    // Global variables for our models.
+    let cocoModel;           // For object detection
+    let materialClassifier;  // Your ResNet50-based material classification model
 
-            // Initialize camera list
-            initializeCameras();
+    // Load your trained ResNet50 model (make sure it has been converted to TFJS format)
+    tf.loadLayersModel("model/model.json")
+      .then(model => {
+        materialClassifier = model;
+        console.log("Material classifier (ResNet50) loaded.");
+      })
+      .catch(err => console.error("Error loading material classifier:", err));
 
-            startWebcamButton.addEventListener('click', function() {
-                if (currentStream) {
-                    stopWebcam();
-                } else {
-                    startWebcam();
-                }
-            });
+    // Start the webcam video stream.
+    function startVideoStream() {
+      if (navigator.mediaDevices.getUserMedia) {
+        navigator.mediaDevices.getUserMedia({ video: true })
+          .then(stream => { video.srcObject = stream; })
+          .catch(err => { console.error("Error accessing webcam:", err); });
+      } else {
+        alert("getUserMedia is not supported by your browser.");
+      }
+    }
 
-            captureButton.addEventListener('click', function() {
-                captureAndAnalyze();
-            });
+    // Draw the fixed bins.
+    function drawBins() {
+      // Draw Trash bin (left)
+      context.fillStyle = "gray";
+      context.beginPath();
+      context.arc(trashBinPos.x, trashBinPos.y, 30, 0, 2 * Math.PI);
+      context.fill();
+      context.font = "16px Arial";
+      context.fillStyle = "white";
+      context.fillText("Trash", trashBinPos.x - 20, trashBinPos.y + 5);
 
-            cameraSelect.addEventListener('change', function() {
-                if (currentStream) {
-                    startWebcam(); // Restart stream with new camera
-                }
-            });
+      // Draw Recycling bin (right)
+      context.fillStyle = "blue";
+      context.beginPath();
+      context.arc(recycleBinPos.x, recycleBinPos.y, 30, 0, 2 * Math.PI);
+      context.fill();
+      context.fillStyle = "white";
+      context.fillText("Recycle", recycleBinPos.x - 30, recycleBinPos.y + 5);
+    }
 
-            async function startWebcam() {
-                if (currentStream) {
-                    stopWebcam();
-                }
+    // Asynchronously classify material using the ResNet50 model.
+    async function classifyMaterial(imageData) {
+      // Convert the ImageData to a tensor.
+      let tensor = tf.browser.fromPixels(imageData);
+      // Resize tensor to match the model's expected input (384x384 in this case).
+      tensor = tf.image.resizeBilinear(tensor, [384, 384]);
+      // Expand dimensions to create a batch (resulting tensor shape becomes [1, 384, 384, 3]).
+      tensor = tensor.expandDims(0);
+      // Normalize pixel values to the range [0, 1].
+      tensor = tensor.toFloat().div(tf.scalar(255));
+      
+      // Run the model prediction if it has been successfully loaded.
+      if (materialClassifier) {
+        const prediction = materialClassifier.predict(tensor);
+        // Get the predicted class index.
+        const predictedIndex = prediction.argMax(-1).dataSync()[0];
+        // Map the index to a material label. Adjust the ordering as per your training labels.
+        const labels = ["plastic", "metal", "glass", "paper", "organic", "other"];
+        return labels[predictedIndex];
+      } else {
+        return "unknown";
+      }
+    }
 
-                const constraints = {
-                    video: {
-                        deviceId: cameraSelect.value ? { exact: cameraSelect.value } : undefined
-                    }
-                };
 
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                    currentStream = stream;
-                    videoElement.srcObject = stream;
-                    startWebcamButton.textContent = 'Stop Webcam';
-                    captureButton.disabled = false;
-                    predictionOverlay.style.display = 'none';
-                } catch (error) {
-                    console.error("Error accessing webcam:", error);
-                    alert("Error accessing webcam. Please make sure you have granted camera permissions.");
-                }
-            }
+    // Main loop: detect objects, classify material, and draw overlays.
+    async function predictWebcam() {
+      // Draw the current video frame.
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      drawBins();
 
-            function stopWebcam() {
-                if (currentStream) {
-                    currentStream.getTracks().forEach(track => track.stop());
-                    currentStream = null;
-                }
-                videoElement.srcObject = null;
-                startWebcamButton.textContent = 'Start Webcam';
-                captureButton.disabled = true;
-                predictionOverlay.style.display = 'none';
-            }
+      // Run COCO-SSD object detection.
+      const predictions = await cocoModel.detect(video);
+      // Filter out detections for persons.
+      const nonPersonPredictions = predictions.filter(pred => pred.class !== "person");
 
-            function captureAndAnalyze() {
-                canvas.width = videoElement.videoWidth;
-                canvas.height = videoElement.videoHeight;
-                let ctx = canvas.getContext('2d');
-                ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-                
-                let imageData = canvas.toDataURL('image/jpeg');
-                infer(imageData);
-            }
+      // Draw bounding boxes and labels for non-person objects.
+      nonPersonPredictions.forEach(prediction => {
+        context.strokeStyle = "#00FFFF";
+        context.lineWidth = 2;
+        context.strokeRect(...prediction.bbox);
 
-            function infer(base64image) {
-                $('#output').html("Inferring...");
-                $("#resultContainer").show();
-                predictionOverlay.style.display = 'none';
+        context.font = "16px Arial";
+        context.fillStyle = "#00FFFF";
+        const labelText = `${prediction.class} ${(prediction.score * 100).toFixed(1)}%`;
+        context.fillText(labelText, prediction.bbox[0], (prediction.bbox[1] > 20 ? prediction.bbox[1] - 5 : 20));
+      });
 
-                let settings = {
-                    method: "POST",
-                    url: `https://classify.roboflow.com/${$('#model').val()}/${$('#version').val()}?api_key=${$('#api_key').val()}`,
-                    data: base64image,
-                    error: function(xhr) {
-                        $('#output').html("Error loading response. Check your API key, model, version, and other parameters then try again.");
-                    }
-                };
+      // If there is at least one non-person object, use the first one for material analysis.
+      if (nonPersonPredictions.length > 0) {
+        const obj = nonPersonPredictions[0];
+        // Extract the bounding box (ensure coordinates are valid integers within the canvas boundaries).
+        const x = Math.max(0, Math.floor(obj.bbox[0]));
+        const y = Math.max(0, Math.floor(obj.bbox[1]));
+        const width = Math.floor(obj.bbox[2]);
+        const height = Math.floor(obj.bbox[3]);
 
-                $.ajax(settings).then(function(response) {
-                    let formatted = JSON.stringify(response, null, 4);
-                    $('#output').html(formatted);
-                    
-                    // Display prediction overlay
-                    if (response.predictions && response.predictions.length > 0) {
-                        const topPrediction = response.predictions[0];
-                        const confidence = (topPrediction.confidence * 100).toFixed(1);
-                        predictionOverlay.textContent = `${topPrediction.class}: ${confidence}%`;
-                        predictionOverlay.style.display = 'block';
-                    }
-                });
-            }
-        });
-    </script>
-    <script>
-        if ('serviceWorker' in navigator) {
-          window.addEventListener('load', () => {
-            navigator.serviceWorker.register('/sw.js');
-          });
+        let objImageData;
+        try {
+          objImageData = context.getImageData(x, y, width, height);
+        } catch (e) {
+          console.error("Error extracting image data:", e);
         }
-    </script>
+
+        if (objImageData) {
+          // Run material classification.
+          const material = await classifyMaterial(objImageData);
+          console.log("Predicted material:", material);
+
+          // Decide the target bin based on material.
+          const target = recyclableMaterials.includes(material)
+                            ? recycleBinPos
+                            : trashBinPos;
+
+          // Calculate center of the object's bounding box.
+          const centerX = x + width / 2;
+          const centerY = y + height / 2;
+
+          // Draw a red line from the object's center to the target bin.
+          context.strokeStyle = "red";
+          context.lineWidth = 3;
+          context.beginPath();
+          context.moveTo(centerX, centerY);
+          context.lineTo(target.x, target.y);
+          context.stroke();
+
+          // Optionally, display the predicted material above the bounding box.
+          context.font = "18px Arial";
+          context.fillStyle = "red";
+          context.fillText(material, x, (y > 20 ? y - 5 : 20));
+        }
+      }
+      // Continue the loop.
+      requestAnimationFrame(predictWebcam);
+    }
+
+    // Load the COCO-SSD object detection model.
+    cocoSsd.load().then(model => {
+      cocoModel = model;
+      console.log("COCO-SSD model loaded.");
+      video.addEventListener("loadeddata", predictWebcam);
+    });
+
+    // Start the video stream on page load.
+    startVideoStream();
+  </script>
 </body>
 </html>
