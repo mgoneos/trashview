@@ -13,10 +13,8 @@
   
   <!-- Load TensorFlow.js -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
-  <!-- Load MediaPipe Hands via hand-pose-detection -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection"></script>
-  <!-- MediaPipe Hands dependency -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
+  <!-- Load COCO-SSD model -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
   
   <style>
     html, body {
@@ -68,19 +66,6 @@
     const labels = ["plastic", "metal", "glass", "paper", "organic", "other"];
     const recyclable = ["plastic", "metal", "glass", "paper"];
 
-    // Compute bounding box using wrist (index 0) and fingertips (indices 4, 8, 12, 16, 20)
-    // The box is returned in the video coordinate space.
-    function getBoundingBox(hand) {
-      const indices = [0, 4, 8, 12, 16, 20];
-      const xs = indices.map(i => hand.keypoints[i].x);
-      const ys = indices.map(i => hand.keypoints[i].y);
-      const xMin = Math.min(...xs);
-      const xMax = Math.max(...xs);
-      const yMin = Math.min(...ys);
-      const yMax = Math.max(...ys);
-      return { xMin, yMin, width: xMax - xMin, height: yMax - yMin };
-    }
-
     async function init() {
       try {
         // Start webcam stream.
@@ -89,16 +74,9 @@
         await video.play();
         console.log("Video stream started.");
 
-        // Load the hand detector.
-        detector = await handPoseDetection.createDetector(
-          handPoseDetection.SupportedModels.MediaPipeHands,
-          {
-            runtime: 'mediapipe',
-            modelType: 'lite',
-            solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/hands'
-          }
-        );
-        console.log("Hand detector loaded.");
+        // Load the COCO-SSD object detector.
+        detector = await cocoSsd.load();
+        console.log("COCO-SSD detector loaded.");
 
         // Load the material classifier model.
         materialClassifier = await tf.loadLayersModel("model/model.json");
@@ -114,8 +92,8 @@
     // Draw bins at the bottom corners.
     function drawBins() {
       const binRadius = 40;
-      const trashPos = { x: 50, y: canvas.height - 50 }; // Left side: Trash
-      const recyclePos = { x: canvas.width - 50, y: canvas.height - 50 }; // Right side: Recycling
+      const trashPos = { x: 50, y: canvas.height - 50 };
+      const recyclePos = { x: canvas.width - 50, y: canvas.height - 50 };
 
       // Draw Trash bin.
       ctx.fillStyle = "gray";
@@ -137,12 +115,11 @@
     }
 
     async function detectLoop() {
-      // Ensure video dimensions are available.
       if (video.videoWidth === 0 || video.videoHeight === 0) {
         requestAnimationFrame(detectLoop);
         return;
       }
-      
+
       // Compute scale factor and offsets for "cover" drawing.
       const s = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
       const drawWidth = video.videoWidth * s;
@@ -161,51 +138,35 @@
       ctx.restore();
 
       try {
-        // Estimate hands in the current video frame.
-        const hands = await detector.estimateHands(video);
-        if (hands.length > 0) {
-          // Get bounding box from video coordinates.
-          const bbox = getBoundingBox(hands[0]);
-          // Define a padding (in video coordinate space).
-          const pad = 20;
-          const paddedBox = {
-            xMin: bbox.xMin - pad,
-            yMin: bbox.yMin - pad,
-            width: bbox.width + pad * 2,
-            height: bbox.height + pad * 2
-          };
-          // Convert paddedBox (video coordinates) to canvas coordinates.
-          // For x, flip horizontally: canvasX = canvas.width - (offsetX + (xMin + width)*s)
-          const canvasX = canvas.width - (offsetX + (paddedBox.xMin + paddedBox.width) * s);
-          const canvasY = offsetY + paddedBox.yMin * s;
-          const canvasWidth = paddedBox.width * s;
-          const canvasHeight = paddedBox.height * s;
-          
-          // Draw the padded hand bounding box (yellow).
+        // Detect objects in the current video frame.
+        const predictions = await detector.detect(video);
+        if (predictions.length > 0) {
+          // Use the highest-confidence prediction.
+          const pred = predictions.reduce((a, b) => (a.score > b.score ? a : b));
+          const [x, y, width, height] = pred.bbox;
+
+          // Convert box to canvas coordinates (flipped horizontally).
+          const canvasX = canvas.width - (offsetX + (x + width) * s);
+          const canvasY = offsetY + y * s;
+          const canvasWidth = width * s;
+          const canvasHeight = height * s;
+
+          // Draw the detection bounding box.
           ctx.strokeStyle = "yellow";
           ctx.lineWidth = 2;
           ctx.strokeRect(canvasX, canvasY, canvasWidth, canvasHeight);
 
-          // Define crop region (same as bounding box) in canvas coordinates.
-          const cropX = canvasX;
-          const cropY = canvasY;
-          const cropW = canvasWidth;
-          const cropH = canvasHeight;
-          
-          // Draw crop region (red) for visualization.
-          ctx.strokeStyle = "red";
-          ctx.strokeRect(cropX, cropY, cropW, cropH);
-
           // Extract image data from the crop region.
           let imgData;
           try {
-            imgData = ctx.getImageData(cropX, cropY, cropW, cropH);
+            imgData = ctx.getImageData(canvasX, canvasY, canvasWidth, canvasHeight);
           } catch (e) {
             console.error("Error extracting image data:", e);
             imgData = null;
           }
 
           if (imgData) {
+            // Classify the cropped object material.
             const inputTensor = tf.browser.fromPixels(imgData)
               .resizeBilinear([384, 384])
               .toFloat()
@@ -218,27 +179,26 @@
             const confidence = probs[idx];
             const label = labels[idx];
 
-            // Prepare prediction text with a black background for legibility.
+            // Prepare prediction text.
             const text = `${label} (${(confidence * 100).toFixed(1)}%)`;
             ctx.font = "16px Arial";
             const textMetrics = ctx.measureText(text);
             const textWidth = textMetrics.width;
-            const textHeight = 20;  // Approximate height.
-            const textX = cropX;
-            const textY = cropY - textHeight - 5;
+            const textHeight = 20;
+            const textX = canvasX;
+            const textY = canvasY - textHeight - 5;
             ctx.fillStyle = "black";
             ctx.fillRect(textX - 5, textY - textHeight + 5, textWidth + 10, textHeight + 5);
 
-            // Draw prediction text in white.
             ctx.fillStyle = "white";
             ctx.fillText(text, textX, textY);
-            
+
             // Draw an arrow toward the appropriate bin.
             const target = recyclable.includes(label)
               ? { x: canvas.width - 50, y: canvas.height - 50 }
               : { x: 50, y: canvas.height - 50 };
             ctx.beginPath();
-            ctx.moveTo(cropX + cropW / 2, cropY + cropH / 2);
+            ctx.moveTo(canvasX + canvasWidth / 2, canvasY + canvasHeight / 2);
             ctx.lineTo(target.x, target.y);
             ctx.strokeStyle = "lime";
             ctx.lineWidth = 2;
