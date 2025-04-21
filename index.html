@@ -7,213 +7,229 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="TrashView">
-  <!-- Replace with your own app icon URL -->
-  <link rel="apple-touch-icon" href="path/to/icon.png">
   <title>TrashView</title>
   
-  <!-- Load TensorFlow.js -->
+  <!-- TensorFlow.js + MediaPipe Hands -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
-  <!-- Load COCO-SSD model -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
   
   <style>
     html, body {
-      margin: 0;
-      padding: 0;
-      background: #222;
-      color: white;
-      overflow: hidden;
-      height: 100%;
-      width: 100%;
+      margin: 0; padding: 0;
+      background: #222; color: white;
+      overflow: hidden; height: 100%; width: 100%;
     }
-    /* Fullscreen video and canvas with proper aspect ratio */
     #video, #canvas {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
+      position: fixed; top: 0; left: 0;
+      width: 100%; height: 100%;
       object-fit: cover;
     }
-    /* Hide video (set opacity to 0) after debugging */
-    #video {
-      z-index: 1;
-      opacity: 0;
-    }
-    #canvas {
-      z-index: 2;
+    #video { z-index: 1; opacity: 0; } /* hide raw video */
+    #canvas { z-index: 2; }
+
+    /* Toggle button */
+    #toggleModeBtn {
+      position: absolute;
+      top: 10px; left: 10px;
+      z-index: 3;
+      padding: 8px 12px;
+      background: rgba(0,0,0,0.6);
+      border: none; border-radius: 4px;
+      color: #fff; font-size: 14px;
+      cursor: pointer;
     }
   </style>
 </head>
 <body>
+  <button id="toggleModeBtn">Mode: Hand</button>
   <video id="video" autoplay muted playsinline></video>
   <canvas id="canvas"></canvas>
 
   <script>
     const video = document.getElementById("video");
     const canvas = document.getElementById("canvas");
-    const ctx = canvas.getContext("2d");
-
-    // Resize canvas to match the window dimensions.
-    function resizeCanvas() {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-    }
-    window.addEventListener('resize', resizeCanvas);
-    resizeCanvas();
+    const ctx    = canvas.getContext("2d");
+    const btn    = document.getElementById("toggleModeBtn");
 
     let detector, materialClassifier;
-    const labels = ["plastic", "metal", "glass", "paper", "organic", "other"];
-    const recyclable = ["plastic", "metal", "glass", "paper"];
+    let classifyCenter = false;  // false = hand mode, true = center mode
 
-    async function init() {
-      try {
-        // Start webcam stream.
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        video.srcObject = stream;
-        await video.play();
-        console.log("Video stream started.");
+    const labels      = ["plastic","metal","glass","paper","organic","other"];
+    const recyclable  = ["plastic","metal","glass","paper"];
 
-        // Load the COCO-SSD object detector.
-        detector = await cocoSsd.load();
-        console.log("COCO-SSD detector loaded.");
-
-        // Load the material classifier model.
-        materialClassifier = await tf.loadLayersModel("model/model.json");
-        console.log("Material classifier loaded.");
-
-        // Start the detection loop.
-        detectLoop();
-      } catch (err) {
-        console.error("Error during initialization:", err);
-      }
-    }
-
-    // Draw bins at the bottom corners.
+    // Swap bins: now recycling is left, trash is right
     function drawBins() {
       const binRadius = 40;
-      const trashPos = { x: 50, y: canvas.height - 50 };
-      const recyclePos = { x: canvas.width - 50, y: canvas.height - 50 };
+      // Recycling on left
+      const recyclePos = { x: 50,                   y: canvas.height - 50 };
+      // Trash on right
+      const trashPos   = { x: canvas.width  - 50,   y: canvas.height - 50 };
 
-      // Draw Trash bin.
-      ctx.fillStyle = "gray";
-      ctx.beginPath();
-      ctx.arc(trashPos.x, trashPos.y, binRadius, 0, 2 * Math.PI);
-      ctx.fill();
-      ctx.font = "16px Arial";
-      ctx.fillStyle = "white";
-      ctx.textAlign = "center";
-      ctx.fillText("Trash", trashPos.x, trashPos.y + 5);
-
-      // Draw Recycling bin.
+      // Recycling bin
       ctx.fillStyle = "blue";
       ctx.beginPath();
-      ctx.arc(recyclePos.x, recyclePos.y, binRadius, 0, 2 * Math.PI);
+      ctx.arc(recyclePos.x, recyclePos.y, binRadius, 0, 2*Math.PI);
       ctx.fill();
       ctx.fillStyle = "white";
+      ctx.textAlign = "center";
+      ctx.font = "16px Arial";
       ctx.fillText("Recycling", recyclePos.x, recyclePos.y + 5);
+
+      // Trash bin
+      ctx.fillStyle = "gray";
+      ctx.beginPath();
+      ctx.arc(trashPos.x, trashPos.y, binRadius, 0, 2*Math.PI);
+      ctx.fill();
+      ctx.fillStyle = "white";
+      ctx.fillText("Trash", trashPos.x, trashPos.y + 5);
+
+      // Return bin positions for arrow logic
+      return { recyclePos, trashPos };
+    }
+
+    // Button toggles mode
+    btn.addEventListener("click", () => {
+      classifyCenter = !classifyCenter;
+      btn.textContent = classifyCenter ? "Mode: Center" : "Mode: Hand";
+    });
+
+    function resizeCanvas() {
+      canvas.width  = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener("resize", resizeCanvas);
+    resizeCanvas();
+
+    // Hand bounding‐box from keypoints
+    function getBoundingBox(hand) {
+      const idxs = [0,4,8,12,16,20];
+      const xs = idxs.map(i => hand.keypoints[i].x);
+      const ys = idxs.map(i => hand.keypoints[i].y);
+      return {
+        xMin: Math.min(...xs),
+        yMin: Math.min(...ys),
+        width:  Math.max(...xs) - Math.min(...xs),
+        height: Math.max(...ys) - Math.min(...ys)
+      };
+    }
+
+    async function init() {
+      // Start camera
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      video.srcObject = stream;
+      await video.play();
+
+      // Load detectors
+      detector = await handPoseDetection.createDetector(
+        handPoseDetection.SupportedModels.MediaPipeHands,
+        { runtime:'mediapipe', modelType:'lite',
+          solutionPath:'https://cdn.jsdelivr.net/npm/@mediapipe/hands' }
+      );
+      materialClassifier = await tf.loadLayersModel("model/model.json");
+
+      detectLoop();
     }
 
     async function detectLoop() {
-      if (video.videoWidth === 0 || video.videoHeight === 0) {
-        requestAnimationFrame(detectLoop);
-        return;
+      if (video.videoWidth===0) {
+        return requestAnimationFrame(detectLoop);
       }
 
-      // Compute scale factor and offsets for "cover" drawing.
-      const s = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
-      const drawWidth = video.videoWidth * s;
-      const drawHeight = video.videoHeight * s;
-      const offsetX = (canvas.width - drawWidth) / 2;
-      const offsetY = (canvas.height - drawHeight) / 2;
+      // Compute cover fit transforms
+      const s          = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
+      const drawW      = video.videoWidth  * s;
+      const drawH      = video.videoHeight * s;
+      const offsetX    = (canvas.width - drawW)  / 2;
+      const offsetY    = (canvas.height - drawH) / 2;
 
-      // Clear canvas.
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      // Draw the video flipped horizontally with proper scaling and centering.
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      // Flip & draw video
       ctx.save();
-      ctx.translate(canvas.width, 0);
-      ctx.scale(-1, 1);
-      ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight, offsetX, offsetY, drawWidth, drawHeight);
+      ctx.translate(canvas.width,0); ctx.scale(-1,1);
+      ctx.drawImage(video, 0,0, video.videoWidth,video.videoHeight,
+                    offsetX,offsetY, drawW,drawH);
       ctx.restore();
 
-      try {
-        // Detect objects in the current video frame.
-        const predictions = await detector.detect(video);
-        // Exclude human / people detections.
-        const objects = predictions.filter(p => p.class !== 'person');
-        if (objects.length > 0) {
-          // Use the highest-confidence non-person prediction.
-          const pred = objects.reduce((a, b) => (a.score > b.score ? a : b));
-          const [x, y, width, height] = pred.bbox;
+      let cropX, cropY, cropW, cropH;
 
-          // Convert box to canvas coordinates (flipped horizontally).
-          const canvasX = canvas.width - (offsetX + (x + width) * s);
-          const canvasY = offsetY + y * s;
-          const canvasWidth = width * s;
-          const canvasHeight = height * s;
+      if (!classifyCenter) {
+        // --- HAND MODE ---
+        try {
+          const hands = await detector.estimateHands(video);
+          if (hands.length>0) {
+            const bbox = getBoundingBox(hands[0]);
+            const pad  = 20;
+            const pb   = {
+              xMin: bbox.xMin - pad, yMin: bbox.yMin - pad,
+              width: bbox.width + pad*2, height: bbox.height + pad*2
+            };
+            // To canvas coords & flip X
+            cropX = canvas.width - (offsetX + (pb.xMin + pb.width)*s);
+            cropY = offsetY + pb.yMin * s;
+            cropW = pb.width  * s;
+            cropH = pb.height * s;
 
-          // Draw the detection bounding box.
-          ctx.strokeStyle = "yellow";
-          ctx.lineWidth = 2;
-          ctx.strokeRect(canvasX, canvasY, canvasWidth, canvasHeight);
-
-          // Extract image data from the crop region.
-          let imgData;
-          try {
-            imgData = ctx.getImageData(canvasX, canvasY, canvasWidth, canvasHeight);
-          } catch (e) {
-            console.error("Error extracting image data:", e);
-            imgData = null;
+            // draw bbox
+            ctx.strokeStyle = "yellow"; ctx.lineWidth=2;
+            ctx.strokeRect(cropX, cropY, cropW, cropH);
           }
-
-          if (imgData) {
-            // Classify the cropped object material.
-            const inputTensor = tf.browser.fromPixels(imgData)
-              .resizeBilinear([384, 384])
-              .toFloat()
-              .div(tf.scalar(255))
-              .expandDims();
-
-            const prediction = materialClassifier.predict(inputTensor);
-            const probs = prediction.dataSync();
-            const idx = prediction.argMax(-1).dataSync()[0];
-            const confidence = probs[idx];
-            const label = labels[idx];
-
-            // Prepare prediction text.
-            const text = `${label} (${(confidence * 100).toFixed(1)}%)`;
-            ctx.font = "16px Arial";
-            const textMetrics = ctx.measureText(text);
-            const textWidth = textMetrics.width;
-            const textHeight = 20;
-            const textX = canvasX;
-            const textY = canvasY - textHeight - 5;
-            ctx.fillStyle = "black";
-            ctx.fillRect(textX - 5, textY - textHeight + 5, textWidth + 10, textHeight + 5);
-
-            ctx.fillStyle = "white";
-            ctx.fillText(text, textX, textY);
-
-            // Draw an arrow toward the appropriate bin.
-            const target = recyclable.includes(label)
-              ? { x: canvas.width - 50, y: canvas.height - 50 }
-              : { x: 50, y: canvas.height - 50 };
-            ctx.beginPath();
-            ctx.moveTo(canvasX + canvasWidth / 2, canvasY + canvasHeight / 2);
-            ctx.lineTo(target.x, target.y);
-            ctx.strokeStyle = "lime";
-            ctx.lineWidth = 2;
-            ctx.stroke();
-          }
+        } catch(e) {
+          console.error("Hand detect error:", e);
         }
-      } catch (err) {
-        console.error("Detection error:", err);
+      } else {
+        // --- CENTER MODE ---
+        cropW = canvas.width * 0.5;
+        cropH = canvas.height * 0.5;
+        cropX = (canvas.width  - cropW)/2;
+        cropY = (canvas.height - cropH)/2;
+        // draw center region
+        ctx.strokeStyle = "orange"; ctx.lineWidth = 2;
+        ctx.strokeRect(cropX, cropY, cropW, cropH);
       }
-      
-      // Draw bins on top.
-      drawBins();
-      
+
+      // If we have a valid crop, classify it
+      if (cropW > 0 && cropH > 0) {
+        let imgData;
+        try {
+          imgData = ctx.getImageData(cropX, cropY, cropW, cropH);
+        } catch(e) {
+          imgData = null;
+        }
+        if (imgData) {
+          const tensor = tf.browser.fromPixels(imgData)
+            .resizeBilinear([384,384])
+            .toFloat().div(255).expandDims();
+          const pred   = materialClassifier.predict(tensor);
+          const probs  = pred.dataSync();
+          const i      = pred.argMax(-1).dataSync()[0];
+          const confidence = probs[i];
+          const label  = labels[i];
+
+          // draw label
+          const txt = `${label} (${(confidence*100).toFixed(1)}%)`;
+          ctx.font="16px Arial";
+          const m = ctx.measureText(txt);
+          const txtX = cropX, txtY = cropY - 8;
+          ctx.fillStyle="black";
+          ctx.fillRect(txtX-4, txtY-18, m.width+8, 20);
+          ctx.fillStyle="white";
+          ctx.fillText(txt, txtX, txtY);
+
+          // draw arrow to correct bin
+          const { recyclePos, trashPos } = drawBins();
+          const target = recyclable.includes(label) ? recyclePos : trashPos;
+          ctx.beginPath();
+          ctx.moveTo(cropX + cropW/2, cropY + cropH/2);
+          ctx.lineTo(target.x, target.y);
+          ctx.strokeStyle="lime"; ctx.lineWidth=2;
+          ctx.stroke();
+        }
+      } else {
+        // no classification — still draw bins
+        drawBins();
+      }
+
       requestAnimationFrame(detectLoop);
     }
 
