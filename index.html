@@ -19,47 +19,58 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
   
   <style>
-    body {
+    html, body {
       margin: 0;
+      padding: 0;
       background: #222;
       color: white;
       overflow: hidden;
+      height: 100%;
+      width: 100%;
     }
-    /* For debugging you can show the video; hide it later by setting display:none */
-    #video {
-      display: none;
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      width: 320px;
-      height: 240px;
-      border: 2px solid white;
-      z-index: 2;
-    }
-    #canvas {
-      position: absolute;
+    /* Fullscreen video and canvas with proper aspect ratio */
+    #video, #canvas {
+      position: fixed;
       top: 0;
       left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    /* Hide video (set opacity to 0) after debugging */
+    #video {
       z-index: 1;
+      opacity: 0;
+    }
+    #canvas {
+      z-index: 2;
     }
   </style>
 </head>
 <body>
   <video id="video" autoplay muted playsinline></video>
-  <canvas id="canvas" width="640" height="480"></canvas>
+  <canvas id="canvas"></canvas>
 
   <script>
     const video = document.getElementById("video");
     const canvas = document.getElementById("canvas");
     const ctx = canvas.getContext("2d");
 
+    // Resize canvas to match the window dimensions.
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
     let detector, materialClassifier;
     const labels = ["plastic", "metal", "glass", "paper", "organic", "other"];
     const recyclable = ["plastic", "metal", "glass", "paper"];
 
-    // Helper: Compute bounding box from wrist and fingertip keypoints only.
+    // Compute bounding box using wrist (index 0) and fingertips (indices 4, 8, 12, 16, 20)
+    // The box is returned in the video coordinate space.
     function getBoundingBox(hand) {
-      // Use indices: 0 (wrist), 4, 8, 12, 16, 20 (fingertips)
       const indices = [0, 4, 8, 12, 16, 20];
       const xs = indices.map(i => hand.keypoints[i].x);
       const ys = indices.map(i => hand.keypoints[i].y);
@@ -100,25 +111,62 @@
       }
     }
 
+    // Draw bins at the bottom corners.
+    function drawBins() {
+      const binRadius = 40;
+      const trashPos = { x: 50, y: canvas.height - 50 }; // Left side: Trash
+      const recyclePos = { x: canvas.width - 50, y: canvas.height - 50 }; // Right side: Recycling
+
+      // Draw Trash bin.
+      ctx.fillStyle = "gray";
+      ctx.beginPath();
+      ctx.arc(trashPos.x, trashPos.y, binRadius, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.font = "16px Arial";
+      ctx.fillStyle = "white";
+      ctx.textAlign = "center";
+      ctx.fillText("Trash", trashPos.x, trashPos.y + 5);
+
+      // Draw Recycling bin.
+      ctx.fillStyle = "blue";
+      ctx.beginPath();
+      ctx.arc(recyclePos.x, recyclePos.y, binRadius, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.fillStyle = "white";
+      ctx.fillText("Recycling", recyclePos.x, recyclePos.y + 5);
+    }
+
     async function detectLoop() {
-      // Clear canvas and draw the flipped video.
+      // Ensure video dimensions are available.
+      if (video.videoWidth === 0 || video.videoHeight === 0) {
+        requestAnimationFrame(detectLoop);
+        return;
+      }
+      
+      // Compute scale factor and offsets for "cover" drawing.
+      const s = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
+      const drawWidth = video.videoWidth * s;
+      const drawHeight = video.videoHeight * s;
+      const offsetX = (canvas.width - drawWidth) / 2;
+      const offsetY = (canvas.height - drawHeight) / 2;
+
+      // Clear canvas.
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Draw the video flipped horizontally with proper scaling and centering.
       ctx.save();
       ctx.translate(canvas.width, 0);
       ctx.scale(-1, 1);
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight, offsetX, offsetY, drawWidth, drawHeight);
       ctx.restore();
 
       try {
         // Estimate hands in the current video frame.
         const hands = await detector.estimateHands(video);
-        // Log for debugging.
-        console.log("Hands detected:", hands);
-
         if (hands.length > 0) {
-          // Compute bounding box using only wrist and fingertip keypoints.
+          // Get bounding box from video coordinates.
           const bbox = getBoundingBox(hands[0]);
-          // Add padding (in pixels).
+          // Define a padding (in video coordinate space).
           const pad = 20;
           const paddedBox = {
             xMin: bbox.xMin - pad,
@@ -126,24 +174,23 @@
             width: bbox.width + pad * 2,
             height: bbox.height + pad * 2
           };
-          // Flip the x coordinate to match the mirrored canvas.
-          const flippedX = canvas.width - (paddedBox.xMin + paddedBox.width);
-          const x = flippedX;
-          const y = paddedBox.yMin;
-          const w = paddedBox.width;
-          const h = paddedBox.height;
+          // Convert paddedBox (video coordinates) to canvas coordinates.
+          // For x, flip horizontally: canvasX = canvas.width - (offsetX + (xMin + width)*s)
+          const canvasX = canvas.width - (offsetX + (paddedBox.xMin + paddedBox.width) * s);
+          const canvasY = offsetY + paddedBox.yMin * s;
+          const canvasWidth = paddedBox.width * s;
+          const canvasHeight = paddedBox.height * s;
           
           // Draw the padded hand bounding box (yellow).
           ctx.strokeStyle = "yellow";
           ctx.lineWidth = 2;
-          ctx.strokeRect(x, y, w, h);
+          ctx.strokeRect(canvasX, canvasY, canvasWidth, canvasHeight);
 
-          // Define a crop region for classification; you can adjust this as needed.
-          // Here we crop the padded bounding box directly.
-          const cropX = x;
-          const cropY = y;
-          const cropW = w;
-          const cropH = h;
+          // Define crop region (same as bounding box) in canvas coordinates.
+          const cropX = canvasX;
+          const cropY = canvasY;
+          const cropW = canvasWidth;
+          const cropH = canvasHeight;
           
           // Draw crop region (red) for visualization.
           ctx.strokeStyle = "red";
@@ -171,12 +218,22 @@
             const confidence = probs[idx];
             const label = labels[idx];
 
-            // Display prediction text.
-            ctx.fillStyle = "white";
+            // Prepare prediction text with a black background for legibility.
+            const text = `${label} (${(confidence * 100).toFixed(1)}%)`;
             ctx.font = "16px Arial";
-            ctx.fillText(`${label} (${(confidence * 100).toFixed(1)}%)`, cropX, cropY - 5);
+            const textMetrics = ctx.measureText(text);
+            const textWidth = textMetrics.width;
+            const textHeight = 20;  // Approximate height.
+            const textX = cropX;
+            const textY = cropY - textHeight - 5;
+            ctx.fillStyle = "black";
+            ctx.fillRect(textX - 5, textY - textHeight + 5, textWidth + 10, textHeight + 5);
 
-            // Draw an arrow toward a bin based on material type.
+            // Draw prediction text in white.
+            ctx.fillStyle = "white";
+            ctx.fillText(text, textX, textY);
+            
+            // Draw an arrow toward the appropriate bin.
             const target = recyclable.includes(label)
               ? { x: canvas.width - 50, y: canvas.height - 50 }
               : { x: 50, y: canvas.height - 50 };
@@ -191,7 +248,10 @@
       } catch (err) {
         console.error("Detection error:", err);
       }
-
+      
+      // Draw bins on top.
+      drawBins();
+      
       requestAnimationFrame(detectLoop);
     }
 
