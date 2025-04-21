@@ -140,9 +140,11 @@
       try {
         // Detect objects in the current video frame.
         const predictions = await detector.detect(video);
-        if (predictions.length > 0) {
-          // Use the highest-confidence prediction.
-          const pred = predictions.reduce((a, b) => (a.score > b.score ? a : b));
+        // Exclude human / people detections.
+        const objects = predictions.filter(p => p.class !== 'person');
+        if (objects.length > 0) {
+          // Use the highest-confidence non-person prediction.
+          const pred = objects.reduce((a, b) => (a.score > b.score ? a : b));
           const [x, y, width, height] = pred.bbox;
 
           // Convert box to canvas coordinates (flipped horizontally).
