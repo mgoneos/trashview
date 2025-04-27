@@ -58,15 +58,11 @@
     const labels      = ["plastic","metal","glass","paper","organic","other"];
     const recyclable  = ["plastic","metal","glass","paper"];
 
-    // Swap bins: now recycling is left, trash is right
     function drawBins() {
       const binRadius = 40;
-      // Recycling on left
-      const recyclePos = { x: 50,                   y: canvas.height - 50 };
-      // Trash on right
-      const trashPos   = { x: canvas.width  - 50,   y: canvas.height - 50 };
+      const recyclePos = { x: 50, y: canvas.height - 50 };
+      const trashPos   = { x: canvas.width - 50, y: canvas.height - 50 };
 
-      // Recycling bin
       ctx.fillStyle = "blue";
       ctx.beginPath();
       ctx.arc(recyclePos.x, recyclePos.y, binRadius, 0, 2*Math.PI);
@@ -76,7 +72,6 @@
       ctx.font = "16px Arial";
       ctx.fillText("Recycling", recyclePos.x, recyclePos.y + 5);
 
-      // Trash bin
       ctx.fillStyle = "gray";
       ctx.beginPath();
       ctx.arc(trashPos.x, trashPos.y, binRadius, 0, 2*Math.PI);
@@ -84,11 +79,9 @@
       ctx.fillStyle = "white";
       ctx.fillText("Trash", trashPos.x, trashPos.y + 5);
 
-      // Return bin positions for arrow logic
       return { recyclePos, trashPos };
     }
 
-    // Button toggles mode
     btn.addEventListener("click", () => {
       classifyCenter = !classifyCenter;
       btn.textContent = classifyCenter ? "Mode: Center" : "Mode: Hand";
@@ -101,7 +94,6 @@
     window.addEventListener("resize", resizeCanvas);
     resizeCanvas();
 
-    // Hand bounding‐box from keypoints
     function getBoundingBox(hand) {
       const idxs = [0,4,8,12,16,20];
       const xs = idxs.map(i => hand.keypoints[i].x);
@@ -115,16 +107,13 @@
     }
 
     async function init() {
-      // Start camera
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
       video.srcObject = stream;
       await video.play();
 
-      // Load detectors
       detector = await handPoseDetection.createDetector(
         handPoseDetection.SupportedModels.MediaPipeHands,
-        { runtime:'mediapipe', modelType:'lite',
-          solutionPath:'https://cdn.jsdelivr.net/npm/@mediapipe/hands' }
+        { runtime:'mediapipe', modelType:'lite', solutionPath:'https://cdn.jsdelivr.net/npm/@mediapipe/hands' }
       );
       materialClassifier = await tf.loadLayersModel("model/model.json");
 
@@ -132,102 +121,70 @@
     }
 
     async function detectLoop() {
-      if (video.videoWidth===0) {
-        return requestAnimationFrame(detectLoop);
-      }
+      if (video.videoWidth===0) return requestAnimationFrame(detectLoop);
 
-      // Compute cover fit transforms
-      const s          = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
-      const drawW      = video.videoWidth  * s;
-      const drawH      = video.videoHeight * s;
-      const offsetX    = (canvas.width - drawW)  / 2;
-      const offsetY    = (canvas.height - drawH) / 2;
+      const s = Math.max(canvas.width/video.videoWidth, canvas.height/video.videoHeight);
+      const drawW = video.videoWidth*s;
+      const drawH = video.videoHeight*s;
+      const offsetX = (canvas.width-drawW)/2;
+      const offsetY = (canvas.height-drawH)/2;
 
       ctx.clearRect(0,0,canvas.width,canvas.height);
-      // Flip & draw video
       ctx.save();
       ctx.translate(canvas.width,0); ctx.scale(-1,1);
-      ctx.drawImage(video, 0,0, video.videoWidth,video.videoHeight,
-                    offsetX,offsetY, drawW,drawH);
+      ctx.drawImage(video,0,0,video.videoWidth,video.videoHeight,offsetX,offsetY,drawW,drawH);
       ctx.restore();
 
       let cropX, cropY, cropW, cropH;
 
       if (!classifyCenter) {
-        // --- HAND MODE ---
         try {
           const hands = await detector.estimateHands(video);
           if (hands.length>0) {
-            const bbox = getBoundingBox(hands[0]);
-            const pad  = 20;
-            const pb   = {
-              xMin: bbox.xMin - pad, yMin: bbox.yMin - pad,
-              width: bbox.width + pad*2, height: bbox.height + pad*2
-            };
-            // To canvas coords & flip X
-            cropX = canvas.width - (offsetX + (pb.xMin + pb.width)*s);
-            cropY = offsetY + pb.yMin * s;
-            cropW = pb.width  * s;
-            cropH = pb.height * s;
-
-            // draw bbox
-            ctx.strokeStyle = "yellow"; ctx.lineWidth=2;
-            ctx.strokeRect(cropX, cropY, cropW, cropH);
+            const bb = getBoundingBox(hands[0]);
+            const pad = 20;
+            const pb = { xMin: bb.xMin-pad, yMin: bb.yMin-pad, width: bb.width+pad*2, height: bb.height+pad*2 };
+            cropX = canvas.width - (offsetX + (pb.xMin+pb.width)*s);
+            cropY = offsetY + pb.yMin*s;
+            cropW = pb.width*s;
+            cropH = pb.height*s;
           }
-        } catch(e) {
-          console.error("Hand detect error:", e);
-        }
+        } catch(e){}
       } else {
-        // --- CENTER MODE ---
-        cropW = canvas.width * 0.5;
-        cropH = canvas.height * 0.5;
-        cropX = (canvas.width  - cropW)/2;
-        cropY = (canvas.height - cropH)/2;
-        // draw center region
-        ctx.strokeStyle = "orange"; ctx.lineWidth = 2;
-        ctx.strokeRect(cropX, cropY, cropW, cropH);
+        cropW = canvas.width*0.5;
+        cropH = canvas.height*0.5;
+        cropX = (canvas.width-cropW)/2;
+        cropY = (canvas.height-cropH)/2;
       }
 
-      // If we have a valid crop, classify it
-      if (cropW > 0 && cropH > 0) {
+      drawBins();
+
+      if (cropW>0 && cropH>0) {
         let imgData;
-        try {
-          imgData = ctx.getImageData(cropX, cropY, cropW, cropH);
-        } catch(e) {
-          imgData = null;
-        }
+        try { imgData = ctx.getImageData(cropX, cropY, cropW, cropH); } catch(e){}
         if (imgData) {
-          const tensor = tf.browser.fromPixels(imgData)
-            .resizeBilinear([384,384])
-            .toFloat().div(255).expandDims();
-          const pred   = materialClassifier.predict(tensor);
-          const probs  = pred.dataSync();
-          const i      = pred.argMax(-1).dataSync()[0];
+          const tensor = tf.browser.fromPixels(imgData).resizeBilinear([384,384]).toFloat().div(255).expandDims();
+          const pred = materialClassifier.predict(tensor);
+          const probs = pred.dataSync();
+          const i = pred.argMax(-1).dataSync()[0];
           const confidence = probs[i];
-          const label  = labels[i];
+          if (confidence<0.6) return requestAnimationFrame(detectLoop);
+          const label = recyclable.includes(labels[i]) ? 'Recycling' : 'Trash';
 
-          // draw label
-          const txt = `${label} (${(confidence*100).toFixed(1)}%)`;
           ctx.font="16px Arial";
-          const m = ctx.measureText(txt);
-          const txtX = cropX, txtY = cropY - 8;
           ctx.fillStyle="black";
-          ctx.fillRect(txtX-4, txtY-18, m.width+8, 20);
+          ctx.fillRect(cropX-4, cropY-24, 80, 20);
           ctx.fillStyle="white";
-          ctx.fillText(txt, txtX, txtY);
+          ctx.fillText(`${label} ${(confidence*100).toFixed(1)}%`, cropX, cropY-8);
 
-          // draw arrow to correct bin
           const { recyclePos, trashPos } = drawBins();
-          const target = recyclable.includes(label) ? recyclePos : trashPos;
+          const target = label==='Recycling' ? recyclePos : trashPos;
           ctx.beginPath();
-          ctx.moveTo(cropX + cropW/2, cropY + cropH/2);
+          ctx.moveTo(cropX+cropW/2, cropY+cropH/2);
           ctx.lineTo(target.x, target.y);
           ctx.strokeStyle="lime"; ctx.lineWidth=2;
           ctx.stroke();
         }
-      } else {
-        // no classification — still draw bins
-        drawBins();
       }
 
       requestAnimationFrame(detectLoop);
